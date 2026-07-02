@@ -1,0 +1,11 @@
+Sams|100|2|1,2,3
+Patwon ki Haveli|450|1|1,2
+ATV|600|1|1
+Desert|100|2|1,2,3
+Kuldhara|140|1|1,2,3
+Khana|600|1|1,2
+Lemon Soda|120|1|1,2
+Tickets|940|1|1
+Bus Tickets|1480|1|1,3
+Bus Advance|1000|3|1,3
+Bus Advance 1|1000|2|1,2
