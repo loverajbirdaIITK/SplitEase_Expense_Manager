@@ -11,10 +11,34 @@
 #include <algorithm>
 #include <limits>
 
+#if defined(__GNUC__) && (__GNUC__ < 8)
+#include <direct.h>
+namespace std {
+    namespace filesystem {
+        struct path {
+            std::string p;
+            path(const std::string& s) : p(s) {}
+            std::string string() const { return p; }
+        };
+        inline path current_path() {
+            char buf[1024];
+            if (_getcwd(buf, sizeof(buf)) != nullptr) {
+                return path(buf);
+            }
+            return path("");
+        }
+    }
+}
+#else
+#include <filesystem>
+#endif
+
 using namespace std;
 
-
-
+enum class ExpenseType {
+    PERSONAL,
+    GROUP
+};
 
 class User {
 private:
@@ -22,31 +46,21 @@ private:
     string name;
 
 public:
-    
     User() : id(0), name("") {}
-
-    
     User(int id, const string& name) : id(id), name(name) {}
 
-    
     int getId() const {
         return id;
     }
 
-    
     string getName() const {
         return name;
     }
 
-    
     void display() const {
         cout << "ID: " << id << " | Name: " << name << "\n";
     }
 };
-
-
-
-
 
 inline string getUserName(int id, const vector<User>& users) {
     for (const auto& u : users) {
@@ -57,24 +71,46 @@ inline string getUserName(int id, const vector<User>& users) {
     return "Unknown";
 }
 
-
-
-
 class Expense {
-public:
+private:
     string description;
     double amount;
     int payerID;
     vector<int> participants;
+    ExpenseType expenseType;
+    string date;
 
-    
-    Expense() : description(""), amount(0.0), payerID(0) {}
+public:
+    Expense() 
+        : description(""), amount(0.0), payerID(0), expenseType(ExpenseType::GROUP), date("Unknown") {}
 
-    
-    Expense(const string& description, double amount, int payerID, const vector<int>& participants)
-        : description(description), amount(amount), payerID(payerID), participants(participants) {}
+    Expense(const string& description, double amount, int payerID, const vector<int>& participants, ExpenseType type = ExpenseType::GROUP, const string& date = "Unknown")
+        : description(description), amount(amount), payerID(payerID), participants(participants), expenseType(type), date(date) {}
 
-    
+    const string& getDescription() const {
+        return description;
+    }
+
+    double getAmount() const {
+        return amount;
+    }
+
+    int getPayerID() const {
+        return payerID;
+    }
+
+    const vector<int>& getParticipants() const {
+        return participants;
+    }
+
+    ExpenseType getExpenseType() const {
+        return expenseType;
+    }
+
+    const string& getDate() const {
+        return date;
+    }
+
     double calculateShare() const {
         if (participants.empty()) {
             return 0.0;
@@ -82,34 +118,33 @@ public:
         return amount / participants.size();
     }
 
-    
-    void display() const {
-        cout << "Description: " << description << "\n";
-        cout << "  Amount: ₹" << fixed << setprecision(2) << amount << "\n";
-        cout << "  Paid by User ID: " << payerID << "\n";
-        cout << "  Split among User IDs: ";
-        for (size_t i = 0; i < participants.size(); ++i) {
-            cout << participants[i];
-            if (i + 1 < participants.size()) {
-                cout << ", ";
+    void display(const vector<User>& users) const {
+        string typeStr = (getExpenseType() == ExpenseType::PERSONAL) ? "PERSONAL" : "GROUP";
+        cout << "Description: " << getDescription() << "\n";
+        cout << "  Date: " << getDate() << " | Type: " << typeStr << "\n";
+        cout << "  Amount: ₹" << fixed << setprecision(2) << getAmount() << "\n";
+        cout << "  Paid by: " << getUserName(getPayerID(), users) << "\n";
+        if (getExpenseType() == ExpenseType::GROUP) {
+            cout << "  Split among: ";
+            const auto& participants = getParticipants();
+            for (size_t i = 0; i < participants.size(); ++i) {
+                cout << getUserName(participants[i], users);
+                if (i + 1 < participants.size()) {
+                    cout << ", ";
+                }
             }
+            cout << "\n  Share: ₹" << fixed << setprecision(2) << calculateShare() << "\n";
         }
-        cout << "\n  Share: ₹" << fixed << setprecision(2) << calculateShare() << "\n";
     }
 };
-
-
-
 
 class Ledger {
 private:
     unordered_map<int, unordered_map<int, double>> balances;
 
 public:
-    
     Ledger() {}
 
-    
     void addExpense(int payerID, double amount, const vector<int>& participants) {
         if (participants.empty()) return;
         double share = amount / participants.size();
@@ -120,7 +155,6 @@ public:
         }
     }
 
-    
     void addDebt(int debtor, int creditor, double amount) {
         if (debtor == creditor || amount <= 0.0) return;
         double creditorOwesDebtor = balances[creditor][debtor];
@@ -136,7 +170,6 @@ public:
         }
     }
 
-    
     void settleBill(int debtor, int creditor, double amount) {
         if (amount <= 0.0) return;
         double currentDebt = balances[debtor][creditor];
@@ -149,74 +182,270 @@ public:
         }
     }
 
-    
-    void showWhoOwesMe(int userID, const vector<User>& users) const {
+    void displayLedger(const vector<User>& users) const {
         bool found = false;
+        cout << "\nActive Ledger Balances:\n\n";
         for (const auto& outer : balances) {
             int debtorID = outer.first;
-            const auto& innerMap = outer.second;
-            auto it = innerMap.find(userID);
-            if (it != innerMap.end() && it->second > 0.001) {
-                string name = getUserName(debtorID, users);
-                cout << "  - " << name << " (ID: " << debtorID << ") owes you ₹" << fixed << setprecision(2) << it->second << "\n";
-                found = true;
-            }
-        }
-        if (!found) {
-            cout << "  No one owes you money.\n";
-        }
-    }
-
-    
-    void showWhomIOwe(int userID, const vector<User>& users) const {
-        bool found = false;
-        auto it = balances.find(userID);
-        if (it != balances.end()) {
-            for (const auto& inner : it->second) {
+            for (const auto& inner : outer.second) {
                 int creditorID = inner.first;
                 double amount = inner.second;
                 if (amount > 0.001) {
-                    string name = getUserName(creditorID, users);
-                    cout << "  - You owe " << name << " (ID: " << creditorID << ") ₹" << fixed << setprecision(2) << amount << "\n";
+                    string debtorName = getUserName(debtorID, users);
+                    string creditorName = getUserName(creditorID, users);
+                    cout << "  - " << debtorName << " owes " 
+                         << creditorName << " ₹" 
+                         << fixed << setprecision(2) << amount << "\n";
                     found = true;
                 }
             }
         }
         if (!found) {
-            cout << "  You do not owe anyone money.\n";
+            cout << "  No active debts in the system.\n";
         }
     }
 
-    
     void clear() {
         balances.clear();
     }
 
-    
     const unordered_map<int, unordered_map<int, double>>& getBalances() const {
         return balances;
     }
 };
 
-
-
-
-class StorageManager {
+class BudgetManager {
 private:
-    string usersFilePath;
-    string expensesFilePath;
-    string ledgerFilePath;
+    unordered_map<int, unordered_map<string, double>> budgets;
+
+    string toLower(string s) const {
+        for (char& c : s) c = tolower(c);
+        return s;
+    }
+
+    bool matchMonth(const string& m1, const string& m2) const {
+        string a = toLower(m1);
+        string b = toLower(m2);
+        if (a.empty() || b.empty()) return false;
+        if (a.length() >= 3 && b.length() >= 3) {
+            return (a.rfind(b, 0) == 0 || b.rfind(a, 0) == 0);
+        }
+        return a == b;
+    }
+
+    string extractMonth(const string& date) const {
+        stringstream ss(date);
+        string word;
+        while (ss >> word) {
+            bool isAlpha = true;
+            for (char c : word) {
+                if (!isalpha(c)) {
+                    isAlpha = false;
+                    break;
+                }
+            }
+            if (isAlpha && word.length() >= 3) {
+                return word;
+            }
+        }
+        return "Unknown";
+    }
 
 public:
-    
-    StorageManager(const string& usersFile = "users.txt",
-                   const string& expensesFile = "expenses.txt",
-                   const string& ledgerFile = "ledger.txt")
-        : usersFilePath(usersFile), expensesFilePath(expensesFile), ledgerFilePath(ledgerFile) {}
+    BudgetManager() {}
 
-    
-    bool saveUsers(const vector<User>& users) const {
-        ofstream file(usersFilePath);
+    void setBudget(int userID, const string& month, double budget) {
+        budgets[userID][month] = budget;
+    }
+
+    double getBudget(int userID, const string& month) const {
+        auto itUser = budgets.find(userID);
+        if (itUser != budgets.end()) {
+            auto itMonth = itUser->second.find(month);
+            if (itMonth != itUser->second.end()) {
+                return itMonth->second;
+            }
+        }
+        return 0.0;
+    }
+
+    double calculateMonthlySpending(int userID, const string& targetMonth, const vector<Expense>& expenses) const {
+        double total = 0.0;
+        for (const auto& exp : expenses) {
+            string expMonth = extractMonth(exp.getDate());
+            if (matchMonth(expMonth, targetMonth)) {
+                if (exp.getExpenseType() == ExpenseType::PERSONAL) {
+                    if (exp.getPayerID() == userID) {
+                        total += exp.getAmount();
+                    }
+                } else {
+                    const auto& participants = exp.getParticipants();
+                    auto it = find(participants.begin(), participants.end(), userID);
+                    if (it != participants.end()) {
+                        total += exp.calculateShare();
+                    }
+                }
+            }
+        }
+        return total;
+    }
+
+    double calculateMoneyPaid(int userID, const string& targetMonth, const vector<Expense>& expenses) const {
+        double total = 0.0;
+        for (const auto& exp : expenses) {
+            string expMonth = extractMonth(exp.getDate());
+            if (exp.getPayerID() == userID && matchMonth(expMonth, targetMonth)) {
+                total += exp.getAmount();
+            }
+        }
+        return total;
+    }
+
+    void displayUserExpenseHistory(int userID, const vector<Expense>& expenses, const vector<User>& users, int typeFilter, int periodFilter, const string& targetMonth = "") const {
+        bool found = false;
+        int count = 1;
+
+        for (const auto& exp : expenses) {
+            bool involved = (exp.getPayerID() == userID);
+            if (!involved) {
+                for (int p : exp.getParticipants()) {
+                    if (p == userID) {
+                        involved = true;
+                        break;
+                    }
+                }
+            }
+            if (!involved) continue;
+
+            if (typeFilter == 1 && exp.getExpenseType() != ExpenseType::PERSONAL) continue;
+            if (typeFilter == 2 && exp.getExpenseType() != ExpenseType::GROUP) continue;
+
+            if (periodFilter == 1) {
+                string expMonth = extractMonth(exp.getDate());
+                if (!matchMonth(expMonth, targetMonth)) continue;
+            }
+
+            if (!found) {
+                cout << "\nExpense History for " << getUserName(userID, users) << ":\n\n";
+                found = true;
+            }
+
+            string typeStr = (exp.getExpenseType() == ExpenseType::PERSONAL) ? "PERSONAL" : "GROUP";
+            double paidByMe = (exp.getPayerID() == userID) ? exp.getAmount() : 0.0;
+            double myShare = (exp.getExpenseType() == ExpenseType::PERSONAL) ? exp.getAmount() : exp.calculateShare();
+
+            cout << count++ << ". Date: " << exp.getDate() << " | Type: " << typeStr << " | Desc: " << exp.getDescription() << "\n";
+            cout << "   Total Amount: ₹" << fixed << setprecision(2) << exp.getAmount() 
+                 << " | Amount Paid By Me: ₹" << fixed << setprecision(2) << paidByMe 
+                 << " | My Share: ₹" << fixed << setprecision(2) << myShare << "\n";
+            
+            cout << "   Paid By:\n" << getUserName(exp.getPayerID(), users) << "\n";
+            if (exp.getExpenseType() == ExpenseType::GROUP) {
+                cout << "   Participants:\n";
+                const auto& participants = exp.getParticipants();
+                for (size_t i = 0; i < participants.size(); ++i) {
+                    cout << getUserName(participants[i], users);
+                    if (i + 1 < participants.size()) cout << ", ";
+                }
+                cout << "\n";
+            }
+            cout << "\n";
+        }
+
+        if (!found) {
+            cout << "No matching expenses found.\n";
+        }
+    }
+
+    void displayFinancialDashboard(int userID, const string& targetMonth, const vector<Expense>& expenses, const Ledger& ledger, const vector<User>& users) const {
+        double budget = getBudget(userID, targetMonth);
+        double spent = calculateMonthlySpending(userID, targetMonth, expenses);
+        double paid = calculateMoneyPaid(userID, targetMonth, expenses);
+        double remaining = budget - spent;
+
+        double moneyYouOwe = 0.0;
+        const auto& balances = ledger.getBalances();
+        auto it = balances.find(userID);
+        if (it != balances.end()) {
+            for (const auto& inner : it->second) {
+                moneyYouOwe += inner.second;
+            }
+        }
+
+        double moneyOwedToYou = 0.0;
+        for (const auto& outer : balances) {
+            int debtorID = outer.first;
+            if (debtorID != userID) {
+                auto itInner = outer.second.find(userID);
+                if (itInner != outer.second.end()) {
+                    moneyOwedToYou += itInner->second;
+                }
+            }
+        }
+
+        double netPosition = moneyOwedToYou - moneyYouOwe;
+
+        cout << "\n             Monthly Finance Dashboard\n\n";
+        cout << "User                : " << getUserName(userID, users) << "\n";
+        cout << "Month               : " << targetMonth << "\n\n";
+        cout << "Monthly Budget      : ₹" << fixed << setprecision(2) << budget << "\n";
+        cout << "Personal Spending   : ₹" << fixed << setprecision(2) << spent << "\n";
+        cout << "Money Paid          : ₹" << fixed << setprecision(2) << paid << "\n";
+        cout << "Remaining Budget    : ₹" << fixed << setprecision(2) << remaining << "\n\n";
+        cout << "Money You Owe       : ₹" << fixed << setprecision(2) << moneyYouOwe << "\n";
+        cout << "Money Owed To You   : ₹" << fixed << setprecision(2) << moneyOwedToYou << "\n";
+        
+        if (netPosition >= 0.0) {
+            cout << "Net Position        : +₹" << fixed << setprecision(2) << netPosition << "\n\n";
+        } else {
+            cout << "Net Position        : -₹" << fixed << setprecision(2) << -netPosition << "\n\n";
+        }
+
+        string statusStr = "Within Budget";
+        if (budget > 0.0) {
+            double usagePercent = (spent / budget) * 100.0;
+            if (usagePercent > 100.0) {
+                statusStr = "Budget Exceeded";
+            } else if (usagePercent >= 80.0) {
+                statusStr = "Approaching Budget";
+            }
+        } else {
+            statusStr = "No Budget Set";
+        }
+
+        cout << "Budget Status       : " << statusStr << "\n\n";
+
+        if (budget > 0.0 && spent > budget) {
+            cout << "⚠ Warning: Monthly budget exceeded by ₹" << fixed << setprecision(2) << (spent - budget) << ".\n\n";
+        }
+    }
+
+    void clear() {
+        budgets.clear();
+    }
+
+    const unordered_map<int, unordered_map<string, double>>& getBudgets() const {
+        return budgets;
+    }
+};
+
+class SplitEase {
+private:
+    vector<User> users;
+    vector<Expense> expenses;
+    Ledger ledger;
+    BudgetManager budgetManager;
+
+    void displayAvailableUsers() const {
+        cout << "\nAvailable Users:\n\n";
+        for (const auto& u : users) {
+            cout << u.getId() << ". " << u.getName() << "\n";
+        }
+        cout << "\n";
+    }
+
+    bool saveUsers() const {
+        ofstream file("users.txt");
         if (!file.is_open()) return false;
         for (const auto& u : users) {
             file << u.getId() << "," << u.getName() << "\n";
@@ -224,54 +453,92 @@ public:
         return true;
     }
 
-    
-    bool loadUsers(vector<User>& users) const {
-        ifstream file(usersFilePath);
-        if (!file.is_open()) return false;
+    bool loadUsers() {
+        cout << "Loading users.txt...\n";
+        ifstream file("users.txt");
+        if (!file.is_open()) {
+            cout << "Failed to open users.txt\n";
+            return false;
+        }
+        cout << "users.txt opened successfully.\n";
         users.clear();
         string line;
+        int count = 0;
         while (getline(file, line)) {
             if (line.empty()) continue;
             stringstream ss(line);
             string idStr, name;
             if (getline(ss, idStr, ',') && getline(ss, name)) {
                 users.push_back(User(stoi(idStr), name));
+                count++;
             }
         }
+        cout << "Loaded " << count << " users.\n";
         return true;
     }
 
-    
-    bool saveExpenses(const vector<Expense>& expenses) const {
-        ofstream file(expensesFilePath);
+    bool saveExpenses() const {
+        ofstream file("expenses.txt");
         if (!file.is_open()) return false;
         for (const auto& e : expenses) {
-            file << e.description << "|" << e.amount << "|" << e.payerID << "|";
-            for (size_t i = 0; i < e.participants.size(); ++i) {
-                file << e.participants[i];
-                if (i + 1 < e.participants.size()) {
+            file << e.getDescription() << "|" << e.getAmount() << "|" << e.getPayerID() << "|";
+            const auto& participants = e.getParticipants();
+            for (size_t i = 0; i < participants.size(); ++i) {
+                file << participants[i];
+                if (i + 1 < participants.size()) {
                     file << ",";
                 }
             }
-            file << "\n";
+            file << "|";
+            if (e.getExpenseType() == ExpenseType::PERSONAL) {
+                file << "PERSONAL";
+            } else {
+                file << "GROUP";
+            }
+            file << "|" << e.getDate() << "\n";
         }
         return true;
     }
 
-    
-    bool loadExpenses(vector<Expense>& expenses) const {
-        ifstream file(expensesFilePath);
-        if (!file.is_open()) return false;
+    bool loadExpenses() {
+        cout << "Loading expenses.txt...\n";
+        ifstream file("expenses.txt");
+        if (!file.is_open()) {
+            cout << "Failed to open expenses.txt\n";
+            return false;
+        }
+        cout << "expenses.txt opened successfully.\n";
         expenses.clear();
         string line;
+        int count = 0;
         while (getline(file, line)) {
             if (line.empty()) continue;
             stringstream ss(line);
-            string desc, amountStr, payerStr, participantsStr;
-            if (getline(ss, desc, '|') &&
-                getline(ss, amountStr, '|') &&
-                getline(ss, payerStr, '|') &&
-                getline(ss, participantsStr)) {
+            vector<string> parts;
+            string part;
+            while (getline(ss, part, '|')) {
+                parts.push_back(part);
+            }
+            if (parts.size() >= 4) {
+                string desc = parts[0];
+                double amount = stod(parts[1]);
+                int payerID = stoi(parts[2]);
+                string participantsStr = parts[3];
+                
+                ExpenseType type = ExpenseType::GROUP;
+                string date = "Unknown";
+                
+                if (parts.size() >= 5) {
+                    if (parts[4] == "PERSONAL" || parts[4] == "0") {
+                        type = ExpenseType::PERSONAL;
+                    } else {
+                        type = ExpenseType::GROUP;
+                    }
+                }
+                if (parts.size() >= 6) {
+                    date = parts[5];
+                }
+                
                 vector<int> participants;
                 stringstream ssParts(participantsStr);
                 string partIdStr;
@@ -280,15 +547,16 @@ public:
                         participants.push_back(stoi(partIdStr));
                     }
                 }
-                expenses.push_back(Expense(desc, stod(amountStr), stoi(payerStr), participants));
+                expenses.push_back(Expense(desc, amount, payerID, participants, type, date));
+                count++;
             }
         }
+        cout << "Loaded " << count << " expenses.\n";
         return true;
     }
 
-    
-    bool saveLedger(const Ledger& ledger) const {
-        ofstream file(ledgerFilePath);
+    bool saveLedger() const {
+        ofstream file("ledger.txt");
         if (!file.is_open()) return false;
         for (const auto& outer : ledger.getBalances()) {
             int debtor = outer.first;
@@ -303,12 +571,17 @@ public:
         return true;
     }
 
-    
-    bool loadLedger(Ledger& ledger) const {
-        ifstream file(ledgerFilePath);
-        if (!file.is_open()) return false;
+    bool loadLedger() {
+        cout << "Loading ledger.txt...\n";
+        ifstream file("ledger.txt");
+        if (!file.is_open()) {
+            cout << "Failed to open ledger.txt\n";
+            return false;
+        }
+        cout << "ledger.txt opened successfully.\n";
         ledger.clear();
         string line;
+        int count = 0;
         while (getline(file, line)) {
             if (line.empty()) continue;
             stringstream ss(line);
@@ -320,26 +593,53 @@ public:
                 int creditor = stoi(creditorStr);
                 double amount = stod(amountStr);
                 ledger.addDebt(debtor, creditor, amount);
+                count++;
+            }
+        }
+        cout << "Loaded " << count << " ledger entries.\n";
+        return true;
+    }
+
+    bool saveBudgets() const {
+        ofstream file("budgets.txt");
+        if (!file.is_open()) return false;
+        for (const auto& userPair : budgetManager.getBudgets()) {
+            int userID = userPair.first;
+            for (const auto& monthPair : userPair.second) {
+                file << userID << "," << monthPair.first << "," << monthPair.second << "\n";
             }
         }
         return true;
     }
-};
 
+    bool loadBudgets() {
+        cout << "Loading budgets.txt...\n";
+        ifstream file("budgets.txt");
+        if (!file.is_open()) {
+            cout << "Failed to open budgets.txt\n";
+            return false;
+        }
+        cout << "budgets.txt opened successfully.\n";
+        budgetManager.clear();
+        string line;
+        int count = 0;
+        while (getline(file, line)) {
+            if (line.empty()) continue;
+            stringstream ss(line);
+            string idStr, monthStr, budgetStr;
+            if (getline(ss, idStr, ',') && getline(ss, monthStr, ',') && getline(ss, budgetStr)) {
+                budgetManager.setBudget(stoi(idStr), monthStr, stod(budgetStr));
+                count++;
+            }
+        }
+        if (count == 1) {
+            cout << "Loaded 1 budget.\n";
+        } else {
+            cout << "Loaded " << count << " budgets.\n";
+        }
+        return true;
+    }
 
-
-
-class SplitEase {
-private:
-    vector<User> users;
-    vector<Expense> expenses;
-    Ledger ledger;
-    StorageManager storageManager;
-
-
-
-
-    
     bool userExists(int id) const {
         for (const auto& u : users) {
             if (u.getId() == id) return true;
@@ -347,7 +647,6 @@ private:
         return false;
     }
 
-    
     int getValidIntInput(const string& prompt) const {
         int val;
         while (true) {
@@ -362,7 +661,6 @@ private:
         }
     }
 
-    
     double getValidDoubleInput(const string& prompt) const {
         double val;
         while (true) {
@@ -377,7 +675,6 @@ private:
         }
     }
 
-    
     string getValidStringInput(const string& prompt) const {
         string val;
         cout << prompt;
@@ -385,32 +682,21 @@ private:
         return val;
     }
 
-
-
-
-    
     void displayMenu() const {
-        cout << "\n=================================\n";
-        cout << "      SplitEase Main Menu\n";
-        cout << "=================================\n";
-        cout << "1. Create User\n";
-        cout << "2. Display Users\n";
-        cout << "3. Search User\n";
-        cout << "4. Add Expense\n";
-        cout << "5. View Expense History\n";
-        cout << "6. View Who Owes Me\n";
-        cout << "7. View Whom I Owe\n";
-        cout << "8. Settle Bill\n";
+        cout << "\n      SplitEase Main Menu\n\n";
+        cout << "1. Add User\n";
+        cout << "2. Add Expense\n";
+        cout << "3. View Users\n";
+        cout << "4. View Ledger\n";
+        cout << "5. Settle Bill\n";
+        cout << "6. View Expense History\n";
+        cout << "7. Set Monthly Budget\n";
+        cout << "8. View Monthly Dashboard\n";
         cout << "9. Save Data\n";
         cout << "10. Load Data\n";
-        cout << "11. Exit\n";
-        cout << "=================================\n";
+        cout << "11. Exit\n\n";
     }
 
-
-
-
-    
     void handleCreateUser() {
         string name = getValidStringInput("Enter User Name: ");
         if (name.empty()) {
@@ -427,7 +713,78 @@ private:
         cout << "User '" << name << "' created successfully with ID: " << newId << "\n";
     }
 
-    
+    void handleAddExpense() {
+        if (users.empty()) {
+            cout << "Please create users first before adding expenses.\n";
+            return;
+        }
+
+        int typeChoice = getValidIntInput("Select Expense Type:\n1. Personal Expense\n2. Group Expense\nChoice: ");
+        ExpenseType type = ExpenseType::GROUP;
+        if (typeChoice == 1) {
+            type = ExpenseType::PERSONAL;
+        } else if (typeChoice != 2) {
+            cout << "Invalid choice. Defaulting to Group Expense.\n";
+        }
+
+        string desc = getValidStringInput("Enter Expense Description (e.g., Dinner): ");
+        if (desc.empty()) {
+            cout << "Expense description cannot be empty.\n";
+            return;
+        }
+        double amount = getValidDoubleInput("Enter Total Amount (₹): ");
+        if (amount <= 0.0) {
+            cout << "Amount must be positive.\n";
+            return;
+        }
+
+        displayAvailableUsers();
+        int payerID = getValidIntInput("Enter Payer User ID: ");
+        if (!userExists(payerID)) {
+            cout << "Payer ID " << payerID << " does not exist.\n";
+            return;
+        }
+
+        string date = getValidStringInput("Enter Date (e.g., \"12 Aug\"): ");
+        if (date.empty()) {
+            date = "Unknown";
+        }
+
+        vector<int> participants;
+        if (type == ExpenseType::PERSONAL) {
+            participants.push_back(payerID);
+            Expense exp(desc, amount, payerID, participants, type, date);
+            expenses.push_back(exp);
+            cout << "Personal Expense added successfully.\n";
+        } else {
+            int numParticipants = getValidIntInput("Enter number of participants: ");
+            if (numParticipants <= 0) {
+                cout << "Number of participants must be greater than 0.\n";
+                return;
+            }
+            displayAvailableUsers();
+            cout << "Enter the ID of each participant:\n";
+            for (int i = 0; i < numParticipants; ++i) {
+                while (true) {
+                    int pId = getValidIntInput("Participant " + to_string(i + 1) + " ID: ");
+                    if (!userExists(pId)) {
+                        cout << "User with ID " << pId << " does not exist. Try again.\n";
+                    } else if (find(participants.begin(), participants.end(), pId) != participants.end()) {
+                        cout << "User ID " << pId << " already added to this expense. Try again.\n";
+                    } else {
+                        participants.push_back(pId);
+                        break;
+                    }
+                }
+            }
+            Expense exp(desc, amount, payerID, participants, type, date);
+            expenses.push_back(exp);
+            ledger.addExpense(payerID, amount, participants);
+            cout << "Group Expense added successfully. Share per participant: ₹" 
+                 << fixed << setprecision(2) << exp.calculateShare() << "\n";
+        }
+    }
+
     void handleDisplayUsers() const {
         if (users.empty()) {
             cout << "No users registered.\n";
@@ -439,129 +796,18 @@ private:
         }
     }
 
-    
-    void handleSearchUser() const {
-        if (users.empty()) {
-            cout << "No users registered to search.\n";
-            return;
-        }
-        int choice = getValidIntInput("Search by: 1. ID  2. Name\nChoice: ");
-        if (choice == 1) {
-            int id = getValidIntInput("Enter User ID: ");
-            bool found = false;
-            for (const auto& u : users) {
-                if (u.getId() == id) {
-                    u.display();
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) cout << "User with ID " << id << " not found.\n";
-        } else if (choice == 2) {
-            string name = getValidStringInput("Enter User Name: ");
-            bool found = false;
-            for (const auto& u : users) {
-                if (u.getName() == name) {
-                    u.display();
-                    found = true;
-                }
-            }
-            if (!found) cout << "No user found with name '" << name << "'.\n";
-        } else {
-            cout << "Invalid choice.\n";
-        }
+    void handleViewLedger() const {
+        ledger.displayLedger(users);
     }
 
-    
-    void handleAddExpense() {
-        if (users.empty()) {
-            cout << "Please create users first before adding expenses.\n";
-            return;
-        }
-        string desc = getValidStringInput("Enter Expense Description (e.g., Dinner): ");
-        if (desc.empty()) {
-            cout << "Expense description cannot be empty.\n";
-            return;
-        }
-        double amount = getValidDoubleInput("Enter Total Amount (₹): ");
-        if (amount <= 0.0) {
-            cout << "Amount must be positive.\n";
-            return;
-        }
-        int payerID = getValidIntInput("Enter Payer User ID: ");
-        if (!userExists(payerID)) {
-            cout << "Payer ID " << payerID << " does not exist.\n";
-            return;
-        }
-        int numParticipants = getValidIntInput("Enter number of participants: ");
-        if (numParticipants <= 0) {
-            cout << "Number of participants must be greater than 0.\n";
-            return;
-        }
-        vector<int> participants;
-        cout << "Enter the ID of each participant:\n";
-        for (int i = 0; i < numParticipants; ++i) {
-            while (true) {
-                int pId = getValidIntInput("Participant " + to_string(i + 1) + " ID: ");
-                if (!userExists(pId)) {
-                    cout << "User with ID " << pId << " does not exist. Try again.\n";
-                } else if (find(participants.begin(), participants.end(), pId) != participants.end()) {
-                    cout << "User ID " << pId << " already added to this expense. Try again.\n";
-                } else {
-                    participants.push_back(pId);
-                    break;
-                }
-            }
-        }
-        Expense exp(desc, amount, payerID, participants);
-        expenses.push_back(exp);
-        ledger.addExpense(payerID, amount, participants);
-        cout << "Expense added successfully. Share per participant: ₹" << fixed << setprecision(2) << exp.calculateShare() << "\n";
-    }
-
-    
-    void handleViewExpenseHistory() const {
-        if (expenses.empty()) {
-            cout << "No expenses recorded.\n";
-            return;
-        }
-        cout << "\n--- Expense History ---\n";
-        for (size_t i = 0; i < expenses.size(); ++i) {
-            cout << i + 1 << ". ";
-            expenses[i].display();
-            cout << "\n";
-        }
-    }
-
-    
-    void handleViewWhoOwesMe() const {
-        int userId = getValidIntInput("Enter your User ID: ");
-        if (!userExists(userId)) {
-            cout << "User ID " << userId << " does not exist.\n";
-            return;
-        }
-        cout << "\n--- People Who Owe " << getUserName(userId, users) << " ---\n";
-        ledger.showWhoOwesMe(userId, users);
-    }
-
-    
-    void handleViewWhomIOwe() const {
-        int userId = getValidIntInput("Enter your User ID: ");
-        if (!userExists(userId)) {
-            cout << "User ID " << userId << " does not exist.\n";
-            return;
-        }
-        cout << "\n--- People " << getUserName(userId, users) << " Owes ---\n";
-        ledger.showWhomIOwe(userId, users);
-    }
-
-    
     void handleSettleBill() {
+        displayAvailableUsers();
         int debtor = getValidIntInput("Enter Debtor ID (person who owes money): ");
         if (!userExists(debtor)) {
             cout << "Debtor User ID " << debtor << " does not exist.\n";
             return;
         }
+        displayAvailableUsers();
         int creditor = getValidIntInput("Enter Creditor ID (person who is owed money): ");
         if (!userExists(creditor)) {
             cout << "Creditor User ID " << creditor << " does not exist.\n";
@@ -581,45 +827,120 @@ private:
              << getUserName(debtor, users) << " to " << getUserName(creditor, users) << " recorded successfully.\n";
     }
 
-    
+    void handleViewExpenseHistory() const {
+        if (expenses.empty()) {
+            cout << "No expenses recorded.\n";
+            return;
+        }
+
+        displayAvailableUsers();
+        int userId = getValidIntInput("Enter your User ID: ");
+        if (!userExists(userId)) {
+            cout << "User ID " << userId << " does not exist.\n";
+            return;
+        }
+
+        int typeFilter = getValidIntInput("Filter by Expense Type:\n1. Personal Expenses\n2. Group Expenses\n3. All Expenses\nChoice: ");
+        int periodFilter = getValidIntInput("Filter by Period:\n1. Target Month\n2. Complete History\nChoice: ");
+        
+        string month = "";
+        if (periodFilter == 1) {
+            month = getValidStringInput("Enter Target Month (e.g. \"August\"): ");
+        }
+
+        budgetManager.displayUserExpenseHistory(userId, expenses, users, typeFilter, periodFilter, month);
+    }
+
+    void handleSetMonthlyBudget() {
+        displayAvailableUsers();
+        int userId = getValidIntInput("Enter User ID: ");
+        if (!userExists(userId)) {
+            cout << "User ID " << userId << " does not exist.\n";
+            return;
+        }
+        string month = getValidStringInput("Enter Month (e.g. \"August\"): ");
+        if (month.empty()) {
+            cout << "Month cannot be empty.\n";
+            return;
+        }
+        double amount = getValidDoubleInput("Enter Budget Amount (₹): ");
+        if (amount < 0.0) {
+            cout << "Budget cannot be negative.\n";
+            return;
+        }
+        budgetManager.setBudget(userId, month, amount);
+        cout << "Monthly budget of ₹" << fixed << setprecision(2) << amount 
+             << " for " << month << " set successfully for user " 
+             << getUserName(userId, users) << ".\n";
+    }
+
+    void handleViewMonthlyDashboard() const {
+        displayAvailableUsers();
+        int userId = getValidIntInput("Enter User ID: ");
+        if (!userExists(userId)) {
+            cout << "User ID " << userId << " does not exist.\n";
+            return;
+        }
+        string month = getValidStringInput("Enter Month (e.g. \"August\"): ");
+        if (month.empty()) {
+            cout << "Month cannot be empty.\n";
+            return;
+        }
+        budgetManager.displayFinancialDashboard(userId, month, expenses, ledger, users);
+    }
+
     void handleSaveData() {
-        bool uSaved = storageManager.saveUsers(users);
-        bool eSaved = storageManager.saveExpenses(expenses);
-        bool lSaved = storageManager.saveLedger(ledger);
-        if (uSaved && eSaved && lSaved) {
-            cout << "All data saved successfully to users.txt, expenses.txt, and ledger.txt.\n";
+        bool uSaved = saveUsers();
+        bool eSaved = saveExpenses();
+        bool lSaved = saveLedger();
+        bool bSaved = saveBudgets();
+        if (uSaved && eSaved && lSaved && bSaved) {
+            cout << "All data saved successfully to users.txt, expenses.txt, ledger.txt, and budgets.txt.\n";
         } else {
             cout << "Warning: Some data files could not be saved. Check file paths.\n";
         }
     }
 
-    
     void handleLoadData() {
-        bool uLoaded = storageManager.loadUsers(users);
-        bool eLoaded = storageManager.loadExpenses(expenses);
-        bool lLoaded = storageManager.loadLedger(ledger);
-        if (uLoaded && eLoaded && lLoaded) {
-            cout << "All data loaded successfully. Ledger restored from saved ledger state.\n";
-        } else if (uLoaded && eLoaded) {
-            cout << "Users and Expenses loaded. Reconstructing ledger balances by replaying expenses...\n";
+        if (loadUsers()) {
+            cout << "Users loaded successfully.\n";
+        } else {
+            cout << "No saved users found.\n";
+        }
+
+        if (loadExpenses()) {
+            cout << "Expenses loaded successfully.\n";
+        } else {
+            cout << "No saved expenses found.\n";
+        }
+
+        if (loadLedger()) {
+            cout << "Ledger loaded successfully.\n";
+        } else {
+            cout << "Ledger file is missing.\n";
             ledger.clear();
             for (const auto& exp : expenses) {
-                ledger.addExpense(exp.payerID, exp.amount, exp.participants);
+                if (exp.getExpenseType() == ExpenseType::GROUP) {
+                    ledger.addExpense(exp.getPayerID(), exp.getAmount(), exp.getParticipants());
+                }
             }
+            cout << "Ledger reconstructed from group expenses.\n";
+        }
+
+        if (loadBudgets()) {
+            cout << "Budgets loaded successfully.\n";
         } else {
-            cout << "No saved data found (or load failed). Starting with clean data.\n";
+            budgetManager.clear();
+            cout << "Warning: No saved budgets were found.\n";
         }
     }
 
 public:
-    
     SplitEase() {}
 
-    
     void run() {
-        cout << "=========================================\n";
-        cout << "      Welcome to SplitEase Application\n";
-        cout << "=========================================\n";
+        cout << "\n      Welcome to SplitEase Application\n\n";
+        cout << "Current Working Directory: " << std::filesystem::current_path().string() << "\n";
         cout << "Attempting to auto-load saved data...\n";
         handleLoadData();
 
@@ -633,25 +954,25 @@ public:
                     handleCreateUser();
                     break;
                 case 2:
-                    handleDisplayUsers();
-                    break;
-                case 3:
-                    handleSearchUser();
-                    break;
-                case 4:
                     handleAddExpense();
                     break;
+                case 3:
+                    handleDisplayUsers();
+                    break;
+                case 4:
+                    handleViewLedger();
+                    break;
                 case 5:
-                    handleViewExpenseHistory();
+                    handleSettleBill();
                     break;
                 case 6:
-                    handleViewWhoOwesMe();
+                    handleViewExpenseHistory();
                     break;
                 case 7:
-                    handleViewWhomIOwe();
+                    handleSetMonthlyBudget();
                     break;
                 case 8:
-                    handleSettleBill();
+                    handleViewMonthlyDashboard();
                     break;
                 case 9:
                     handleSaveData();
