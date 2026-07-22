@@ -25,18 +25,6 @@ users.txt         - User data
 expenses.txt      - Expense records
 ledger.txt        - Balance information
 
-Compilation
-
-g++ -std=c++17 main.cpp -o SplitEase
-
-Run
-
-Windows
-SplitEase.exe
-
-Linux / macOS
-./SplitEase
-
 Future Improvements
 
 • Support unequal bill splitting
